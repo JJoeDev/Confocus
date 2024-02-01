@@ -1,10 +1,14 @@
-#include <cctype>
-#include <cstring>
+#include <asm-generic/ioctls.h>
+#include <iomanip>
+#include <ios>
 #include <iostream>
 #include <cstdlib>
 #include <chrono>
 #include <sstream>
 #include <stdexcept>
+#include <thread>
+#include <sys/ioctl.h>
+#include <unistd.h>
 
 #if defined(_WIN32) || defined(_WIN64)
 #define CLS "cls"
@@ -13,44 +17,86 @@
 #endif
 
 /*
-*
 * FEATURES TO IMPLEMENT!
 * Set custom time
 * Show simple graphics while timer is going (Time left + Progress bar)
-* Set + start time as argv
 * Show simple graphics + controls when not in timer mode
-*
 */
 
 inline void consoleClear() { system(CLS); }
 
-// Arguments 
-void checkArgs(const char* args);
-void printHelp();
-bool checkIfNumber(const char* input);
-
 // Get Timer (in app)
-void SetTime();
+void SetTime(const char* message);
 std::chrono::seconds durationParse(const std::string& input);
 
-const char* welcomeText = "╦ ╦┌─┐┬  ┌─┐┌─┐┌┬┐┌─┐  ┌┬┐┌─┐  ╔═╗┌─┐┌┐┌┌─┐┌─┐┌─┐┬ ┬┌─┐\n"\
-                          "║║║├┤ │  │  │ ││││├┤    │ │ │  ║  │ ││││├┤ │ ││  │ │└─┐\n"\
-                          "╚╩╝└─┘┴─┘└─┘└─┘┴ ┴└─┘   ┴ └─┘  ╚═╝└─┘┘└┘└  └─┘└─┘└─┘└─┘";
+// Start Timer
+void StartTimer();
 
-float timer{0};
+// Terminal size (from sys/ioctl.h)
+struct winsize size;
 
-int main (int argc, char *argv[]) {
+const char* WELCOME_TEXT = R"(
+  ╦ ╦┌─┐┬  ┌─┐┌─┐┌┬┐┌─┐  ┌┬┐┌─┐  ╔═╗┌─┐┌┐┌┌─┐┌─┐┌─┐┬ ┬┌─┐
+  ║║║├┤ │  │  │ ││││├┤    │ │ │  ║  │ ││││├┤ │ ││  │ │└─┐
+  ╚╩╝└─┘┴─┘└─┘└─┘┴ ┴└─┘   ┴ └─┘  ╚═╝└─┘┘└┘└  └─┘└─┘└─┘└─┘
+  )";
+
+const char* BREAK_TEXT = R"(
+ _____     _                  _                    _    _ 
+|_   _|   | |                | |                  | |  | |
+  | | __ _| | _____    __ _  | |__  _ __ ___  __ _| | _| |
+  | |/ _` | |/ / _ \  / _` | | '_ \| '__/ _ \/ _` | |/ / |
+  | | (_| |   <  __/ | (_| | | |_) | | |  __/ (_| |   <|_|
+  \_/\__,_|_|\_\___|  \__,_| |_.__/|_|  \___|\__,_|_|\_(_)
+)";
+
+std::chrono::seconds timer{0};
+
+int main () {
   consoleClear();
-  std::cout << welcomeText << std::endl;
-  
-  if(argc > 1)
-    checkArgs(argv[1]);
-  else
-    SetTime();
 
-  std::cout << timer << '\n';
+  ioctl(STDOUT_FILENO, TIOCGWINSZ, &size);
+
+  std::cout << WELCOME_TEXT << std::endl;
+  std::cout << "\nTime format list\nSeconds: 10s\nMinutes: 7m\nHours: 12h\nCurrently no chaining time (1m 15s)\n\n";
+  
+  SetTime("How long would you like to work?");
+  std::cout << timer.count() << " seconds\n";
+
+  StartTimer();
 
   return 0;
+}
+
+void StartTimer(){
+  auto deltaStart = std::chrono::steady_clock::now();
+  auto end = deltaStart + timer;
+
+  consoleClear();
+
+  while(std::chrono::steady_clock::now() < end){
+    auto now = std::chrono::steady_clock::now();
+    auto elapsedSecs = std::chrono::duration_cast<std::chrono::seconds>(now - deltaStart).count();
+
+    float progress = static_cast<float>(elapsedSecs) / static_cast<float>(timer.count());
+
+    int progressWidth = static_cast<int>(progress * size.ws_row);
+
+    // Progress Bar
+    std::cout << "\r[";
+    for(int i = 0; i < progressWidth; ++i){
+      std::cout << "=";
+    }
+    for(int i = progressWidth; i < size.ws_row; ++i){
+      std::cout << " ";
+    }
+    std::cout << "] " << std::fixed << std::setprecision(1) << (progress * 100.0f) << "%";
+    std::cout.flush();
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  }
+
+  std::cout << "\n\n\n" << BREAK_TEXT << std::endl;
 }
 
 std::chrono::seconds durationParse(const std::string& input){
@@ -77,43 +123,15 @@ std::chrono::seconds durationParse(const std::string& input){
   }
 }
 
-void SetTime(){
-  consoleClear();
-  std::cout << "How long would you like to work focused? (10s = 10sec 1m = 1min)\n";
+void SetTime(const char* message = ""){
+  //consoleClear();
+  std::cout << message << '\n';
   std::string input;
   std::cin >> input;
 
   try{
-    auto duration = durationParse(input);
-    std::cout << "Duration: " << duration.count() << std::endl;
+    timer = durationParse(input);
   } catch (const std::invalid_argument& e){
     std::cerr << "[ ERROR ]: " << e.what() << std::endl;
-  }
-}
-
-bool checkIfNumber(const char* input){
-  if(input == nullptr || *input == '\0') return false;
-
-  for(; *input != '\0'; ++input){
-    if(!std::isdigit(*input)){
-      return false;
-    }
-  }
-
-  return true;
-}
-
-void printHelp(){
-  std::cout << "Confocus can be started with no arguments and with arguments\n[ ARG ] -h | This prints this help page\n[ ARG ] [num] This starts a timer at the given time (30 = 30 sec)" << std::endl;
-}
-
-void checkArgs(const char* arg){
-  if(std::strcmp(arg, "-h") == 0){
-    printHelp();
-  }
-  else{
-    if(checkIfNumber(arg)){
-      timer = std::strtof(arg, nullptr);
-    }
   }
 }
